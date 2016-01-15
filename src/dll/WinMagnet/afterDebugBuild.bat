@@ -1,0 +1,1 @@
+copy x64/Debug/WinMagnetApp64.exe Debug

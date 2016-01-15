@@ -1,0 +1,154 @@
+// WinMagnet.cpp : DLL 응용 프로그램에 대한 진입점을 정의합니다.
+//
+
+#include "stdafx.h"
+
+#pragma data_seg(".kbdata")
+POINT			g_ptStartPos = { 0, };
+RECT			g_rtDTArea = { 0, };
+WNDPROC		g_wndOldProc = NULL;
+HWND			g_hTargetWnd = NULL;
+HHOOK			g_HMouseHook = NULL;
+HINSTANCE	g_hModule = NULL;
+#pragma data_seg()
+#pragma comment(linker, "/SECTION:.kbdata,RWS")
+
+#ifdef _MANAGED
+#pragma managed(push, off)
+#endif
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+                       DWORD  ul_reason_for_call,
+                       LPVOID lpReserved
+					 )
+{
+	switch ( ul_reason_for_call )
+	{
+	case DLL_PROCESS_ATTACH :
+		g_hModule = hModule;
+		break;
+	case DLL_PROCESS_DETACH :
+		break;
+	}
+
+    return TRUE;
+}
+
+#ifdef _MANAGED
+#pragma managed(pop)
+#endif
+
+LRESULT APIENTRY NewWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+{
+	const int MagnetRange = 20;
+	RECT    rtSelfRect;
+	LPRECT  pRect;
+	LRESULT lResult;
+	POINT   ptMouse;
+
+	lResult = CallWindowProc( g_wndOldProc, g_hTargetWnd, uMsg, wParam, lParam );
+
+	if ( uMsg == WM_MOVING )
+	{
+		pRect = (LPRECT)lParam;
+		GetWindowRect( g_hTargetWnd, &rtSelfRect );
+
+		if ( pRect->left < g_rtDTArea.left + MagnetRange && pRect->left > g_rtDTArea.left - MagnetRange )
+		{
+			pRect->left = g_rtDTArea.left;
+			pRect->right = (rtSelfRect.right - rtSelfRect.left) + g_rtDTArea.left;
+		}
+		if ( pRect->top < g_rtDTArea.top + MagnetRange && pRect->top > g_rtDTArea.top - MagnetRange )
+		{
+			pRect->top = g_rtDTArea.top;
+			pRect->bottom = (rtSelfRect.bottom - rtSelfRect.top) + g_rtDTArea.top;
+		}
+		if ( (g_rtDTArea.right - pRect->right) < MagnetRange && (g_rtDTArea.right - pRect->right) > -MagnetRange )
+		{
+			pRect->left = g_rtDTArea.right - (rtSelfRect.right - rtSelfRect.left);
+			pRect->right = g_rtDTArea.right;
+		}
+		if ( (g_rtDTArea.bottom - pRect->bottom) < MagnetRange && (g_rtDTArea.bottom - pRect->bottom) > -MagnetRange )
+		{
+			pRect->top = g_rtDTArea.bottom - (rtSelfRect.bottom - rtSelfRect.top);
+			pRect->bottom = g_rtDTArea.bottom;
+		}
+
+		GetCursorPos( &ptMouse );
+
+		if ( ((ptMouse.x - pRect->left - g_ptStartPos.x) > MagnetRange ) ||
+			 ((ptMouse.x - pRect->left - g_ptStartPos.x) < -MagnetRange ) )
+		{
+			pRect->left = ptMouse.x - g_ptStartPos.x;
+			pRect->right = pRect->left + (rtSelfRect.right - rtSelfRect.left);
+		}
+		if ( ((ptMouse.y - pRect->top - g_ptStartPos.y) > MagnetRange ) ||
+			 ((ptMouse.y - pRect->top - g_ptStartPos.y) < -MagnetRange ) )
+		{
+			pRect->top = ptMouse.y - g_ptStartPos.y;
+			pRect->bottom = pRect->top + (rtSelfRect.bottom - rtSelfRect.top);
+		}
+	}
+
+    return lResult;
+}
+
+void SubClassingStart( HWND hWnd, int nX, int nY )
+{
+    RECT    rtSelfRect;
+
+    g_hTargetWnd = hWnd;
+
+    GetWindowRect( hWnd, &rtSelfRect );
+    g_ptStartPos.x = nX;
+    g_ptStartPos.y = nY;
+    g_ptStartPos.x = g_ptStartPos.x - rtSelfRect.left;
+    g_ptStartPos.y = g_ptStartPos.y - rtSelfRect.top;
+
+    SystemParametersInfo( SPI_GETWORKAREA, 0, &g_rtDTArea, 0 );
+    if ( g_wndOldProc != NewWndProc )
+		g_wndOldProc = (WNDPROC)SetWindowLong( g_hTargetWnd, GWL_WNDPROC, (long)NewWndProc );
+}
+
+void SubClassingClose( void )
+{
+    if ( g_wndOldProc != NULL )
+        SetWindowLong( g_hTargetWnd, GWL_WNDPROC, (long)g_wndOldProc );
+}
+
+LRESULT CALLBACK MouseHookProc( INT nCode, WPARAM wp, LPARAM lp )
+{
+    if ( nCode == HC_ACTION )
+    {
+        switch ( wp )
+        {
+			case    WM_NCLBUTTONDOWN :
+				if ( ((MOUSEHOOKSTRUCT*)lp)->wHitTestCode == HTCAPTION )
+					if ( (GetWindowLong( ((MOUSEHOOKSTRUCT*)lp)->hwnd, GWL_STYLE ) & WS_CHILD) == 0 )
+						SubClassingStart( ((MOUSEHOOKSTRUCT*)lp)->hwnd,
+										  ((MOUSEHOOKSTRUCT*)lp)->pt.x,
+										  ((MOUSEHOOKSTRUCT*)lp)->pt.y );
+				break;
+            case    WM_NCLBUTTONUP :
+            case    WM_NCRBUTTONUP :
+            case    WM_NCMBUTTONUP :
+            case    WM_LBUTTONUP :
+            case    WM_RBUTTONUP :
+            case    WM_MBUTTONUP :
+                SubClassingClose( );
+                break;
+        }
+    }
+
+    return CallNextHookEx( g_HMouseHook, nCode, wp, lp );
+}
+
+extern "C" __declspec(dllexport) void InstallMouseHook( void )
+{
+	g_HMouseHook = SetWindowsHookEx( WH_MOUSE, MouseHookProc, g_hModule, 0 );
+}
+
+extern "C" __declspec(dllexport) void UninstallMouseHook( void )
+{
+	UnhookWindowsHookEx( g_HMouseHook );
+}
